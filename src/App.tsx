@@ -8,12 +8,14 @@ import type { Tab } from './types/nav'
 import { seedIfEmpty } from './db/seed'
 import { consumeSharedPhoto } from './lib/shareTarget'
 import { isSupabaseConfigured } from './lib/supabaseConfig'
+import { purgeExpiredTrash } from './lib/trash'
 import { ProductsPage } from './features/products/ProductsPage'
 import { PhotoSearchOverlay } from './features/products/PhotoSearchOverlay'
 import { OrdersPage } from './features/orders/OrdersPage'
 import { CalculatorPage } from './features/calculator/CalculatorPage'
 import { RepliesPage } from './features/replies/RepliesPage'
 import { DashboardPage } from './features/dashboard/DashboardPage'
+import { TrashPage } from './features/trash/TrashPage'
 
 const PAGES: Record<Tab, () => React.JSX.Element> = {
   products: ProductsPage,
@@ -30,11 +32,13 @@ function App() {
   const [syncing, setSyncing] = useState(false)
   const [authClient, setAuthClient] = useState<SupabaseClient | null>(null)
   const [syncMessage, setSyncMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  const [trashOpen, setTrashOpen] = useState(false)
 
   useEffect(() => {
     seedIfEmpty()
       .catch((err) => console.error('Seeding failed', err))
       .finally(() => setReady(true))
+    purgeExpiredTrash().catch((err) => console.error('Trash auto-purge failed', err))
   }, [])
 
   // Android share-target: the service worker stashed the shared screenshot
@@ -75,6 +79,7 @@ function App() {
       // bundle for the (common) case where the user never taps Sync.
       const { runSync } = await import('./lib/sync')
       const result = await runSync()
+      await purgeExpiredTrash()
       setSyncMessage({ kind: 'success', text: `Synced — ${result.pushed} pushed, ${result.pulled} pulled.` })
     } catch (err) {
       setSyncMessage({ kind: 'error', text: err instanceof Error ? err.message : 'Sync failed.' })
@@ -107,7 +112,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
-      <Header onPhotoSearch={setSearchImage} onSync={handleSyncClick} syncing={syncing} />
+      <Header onPhotoSearch={setSearchImage} onSync={handleSyncClick} syncing={syncing} onOpenTrash={() => setTrashOpen(true)} />
 
       {syncMessage && (
         <div
@@ -127,6 +132,8 @@ function App() {
       {searchImage && (
         <PhotoSearchOverlay image={searchImage} onReplace={setSearchImage} onClose={() => setSearchImage(null)} />
       )}
+
+      {trashOpen && <TrashPage onClose={() => setTrashOpen(false)} />}
 
       {authClient && (
         <SyncAuthModal

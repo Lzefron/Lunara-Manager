@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useLiveQuery } from 'dexie-react-hooks'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { db, SETTINGS_ID, nowIso } from '../../db/db'
 import type { ProfitMode } from '../../types'
 import { generatePriceCode } from '../../lib/pricing'
 import { ProductForm } from '../products/ProductForm'
 import { errorMessage, showToast } from '../../lib/toast'
 
-export function CalculatorPage() {
-  const settings = useLiveQuery(() => db.settings.get(SETTINGS_ID))
+const DEFAULT_RATE = '16.5'
+const DEFAULT_SHIPPING = '900'
+const DEFAULT_PROFIT_MODE: ProfitMode = 'percent'
+const DEFAULT_PROFIT_VALUE = '30'
 
+export function CalculatorPage() {
   const [rateInput, setRateInput] = useState('')
   const [shippingInput, setShippingInput] = useState('')
   const [costRmb, setCostRmb] = useState('')
@@ -19,37 +21,81 @@ export function CalculatorPage() {
   const [copied, setCopied] = useState(false)
   const [showSaveForm, setShowSaveForm] = useState(false)
 
-  // Seed local editable state from settings once loaded (only on first load).
+  // Load once directly from Dexie (not a live query — we need an
+  // unambiguous "does a row exist yet" answer, which useLiveQuery can't
+  // give on its first, still-resolving render). If no row exists (e.g. a
+  // fresh or just-recovered device that hasn't synced yet), the inputs are
+  // pre-filled with sensible defaults for *display*, but nothing is
+  // persisted until the user actually edits something — see `userEdited`
+  // below and CLAUDE.md "Wiped-device recovery" for why that distinction
+  // matters (a row auto-created just from opening this tab would get a
+  // fresh `updated_at` and could beat real synced settings in last-write-wins).
   const [settingsLoaded, setSettingsLoaded] = useState(false)
-  useEffect(() => {
-    if (settings && !settingsLoaded) {
-      setRateInput(String(settings.rmb_to_bdt_rate))
-      setShippingInput(String(settings.shipping_rate_per_kg))
-      setProfitMode(settings.default_profit_mode)
-      setProfitValue(String(settings.default_profit_value))
-      setSettingsLoaded(true)
-    }
-  }, [settings, settingsLoaded])
+  const [userEdited, setUserEdited] = useState(false)
+  const createdAtRef = useRef<string | null>(null)
 
-  // Persist settings edits, debounced, whenever the local values actually change.
   useEffect(() => {
-    if (!settingsLoaded) return
+    db.settings.get(SETTINGS_ID).then((existing) => {
+      if (existing) {
+        createdAtRef.current = existing.created_at
+        setRateInput(String(existing.rmb_to_bdt_rate))
+        setShippingInput(String(existing.shipping_rate_per_kg))
+        setProfitMode(existing.default_profit_mode)
+        setProfitValue(String(existing.default_profit_value))
+      } else {
+        setRateInput(DEFAULT_RATE)
+        setShippingInput(DEFAULT_SHIPPING)
+        setProfitMode(DEFAULT_PROFIT_MODE)
+        setProfitValue(DEFAULT_PROFIT_VALUE)
+      }
+      setSettingsLoaded(true)
+    })
+  }, [])
+
+  // Persist settings edits, debounced — only once the user has actually
+  // changed something, never from the initial load/pre-fill above.
+  useEffect(() => {
+    if (!settingsLoaded || !userEdited) return
     const rate = Number(rateInput)
     const shipping = Number(shippingInput)
     if (Number.isNaN(rate) || Number.isNaN(shipping)) return
     const timer = setTimeout(() => {
+      const ts = nowIso()
       db.settings
-        .update(SETTINGS_ID, {
+        .put({
+          id: SETTINGS_ID,
+          created_at: createdAtRef.current ?? ts,
+          updated_at: ts,
+          deleted: false,
           rmb_to_bdt_rate: rate,
           shipping_rate_per_kg: shipping,
           default_profit_mode: profitMode,
           default_profit_value: Number(profitValue) || 0,
-          updated_at: nowIso(),
+        })
+        .then(() => {
+          createdAtRef.current = createdAtRef.current ?? ts
         })
         .catch((err) => showToast(errorMessage(err, 'Could not save settings.')))
     }, 400)
     return () => clearTimeout(timer)
-  }, [rateInput, shippingInput, profitMode, profitValue, settingsLoaded])
+  }, [rateInput, shippingInput, profitMode, profitValue, settingsLoaded, userEdited])
+
+  function editRate(value: string) {
+    setUserEdited(true)
+    setRateInput(value)
+  }
+  function editShipping(value: string) {
+    setUserEdited(true)
+    setShippingInput(value)
+  }
+  function editProfitMode(mode: ProfitMode) {
+    setUserEdited(true)
+    setProfitMode(mode)
+  }
+  function editProfitValue(value: string) {
+    setUserEdited(true)
+    setProfitValue(value)
+  }
 
   const calc = useMemo(() => {
     const rate = Number(rateInput) || 0
@@ -87,7 +133,7 @@ export function CalculatorPage() {
     <div className="p-4">
       <h1 className="mb-3 text-xl font-semibold text-neutral-900 dark:text-neutral-100">Calculator</h1>
 
-      {!settings ? (
+      {!settingsLoaded ? (
         <p className="text-sm text-neutral-500">Loading…</p>
       ) : (
         <div className="space-y-4">
@@ -97,7 +143,7 @@ export function CalculatorPage() {
               <input
                 type="number"
                 value={rateInput}
-                onChange={(e) => setRateInput(e.target.value)}
+                onChange={(e) => editRate(e.target.value)}
                 className="w-full rounded-lg border border-neutral-300 px-2.5 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
               />
             </label>
@@ -106,7 +152,7 @@ export function CalculatorPage() {
               <input
                 type="number"
                 value={shippingInput}
-                onChange={(e) => setShippingInput(e.target.value)}
+                onChange={(e) => editShipping(e.target.value)}
                 className="w-full rounded-lg border border-neutral-300 px-2.5 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
               />
             </label>
@@ -141,14 +187,14 @@ export function CalculatorPage() {
               <div className="flex rounded-lg border border-neutral-300 p-0.5 dark:border-neutral-700">
                 <button
                   type="button"
-                  onClick={() => setProfitMode('percent')}
+                  onClick={() => editProfitMode('percent')}
                   className={`rounded-md px-3 py-1 text-sm ${profitMode === 'percent' ? 'bg-violet-600 text-white' : 'text-neutral-600 dark:text-neutral-300'}`}
                 >
                   %
                 </button>
                 <button
                   type="button"
-                  onClick={() => setProfitMode('fixed')}
+                  onClick={() => editProfitMode('fixed')}
                   className={`rounded-md px-3 py-1 text-sm ${profitMode === 'fixed' ? 'bg-violet-600 text-white' : 'text-neutral-600 dark:text-neutral-300'}`}
                 >
                   ৳
@@ -157,7 +203,7 @@ export function CalculatorPage() {
               <input
                 type="number"
                 value={profitValue}
-                onChange={(e) => setProfitValue(e.target.value)}
+                onChange={(e) => editProfitValue(e.target.value)}
                 className="flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800"
               />
             </div>

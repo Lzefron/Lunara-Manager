@@ -10,7 +10,7 @@ import { OrderDetail } from './OrderDetail'
 import type { ParsedOrder } from '../../lib/orderParser'
 
 export function OrdersPage() {
-  const orders = useLiveQuery(() => db.orders.filter((o) => !o.deleted).toArray(), [])
+  const orders = useLiveQuery(() => db.orders.filter((o) => !o.deleted && !o.trashed_at).toArray(), [])
   const [statusFilter, setStatusFilter] = useState<OrderStatus | 'all'>('all')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')

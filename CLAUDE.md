@@ -17,18 +17,20 @@ Implemented exactly as specified in `PLAN.md` §3, in `src/types/index.ts` and `
 
 **`deleted` and `available` are NOT Dexie/IndexedDB indexes**, even though they're boolean fields on the records. IndexedDB key paths cannot be booleans (valid key types are number, string, Date, ArrayBuffer, and Array) — attempting to index a boolean throws at write time. These fields are filtered in memory instead (`.filter(p => !p.deleted)`), which is fine at this app's scale (hundreds, not millions, of rows).
 
-Dexie schema v1:
+**Products/Orders/Replies also carry `trashed_at: string | null`** (added post-launch — see "Trash / soft-delete" below). Settings does not have it; it's a singleton config row, not something you delete.
+
+Dexie schema v2 (v1 → v2 just adds the `trashed_at` index):
 ```
-products: 'id, name, updated_at'
-orders:   'id, status, updated_at, phone, customer_name'
+products: 'id, name, updated_at, trashed_at'
+orders:   'id, status, updated_at, phone, customer_name, trashed_at'
 settings: 'id'
-replies:  'id, category, updated_at'
+replies:  'id, category, updated_at, trashed_at'
 syncMeta: 'id'
 ```
 
 ## Sync strategy
 
-Manual push → pull → last-write-wins merge on `updated_at`, keyed by `id`. Soft deletes via `deleted` flag propagate like any other field update. Photos sync separately to Supabase Storage. See `PLAN.md` §4.6 and the Phase 7 entry below for the actual implementation (`lib/sync.ts`); live end-to-end verification is still pending real Supabase credentials.
+Manual push → pull → last-write-wins merge on `updated_at`, keyed by `id`. Photos sync separately to Supabase Storage. See `PLAN.md` §4.6 and the Phase 7 entry below for the original implementation, and "Wiped-device recovery" below for a significant post-launch revision to how pull works.
 
 ## Decisions made
 
@@ -144,8 +146,66 @@ Built:
 
 Verified: production build clean; a full smoke pass against `vite preview` (not dev) across all 5 tabs at both the default mobile viewport and specifically 380px width found zero console errors and zero horizontal scroll (the plan's explicit "test at 380px width" requirement); the corrupt-file toast path was verified live (uploaded a non-image file through the Add Product photo picker, confirmed the red toast appears with the exact expected copy and auto-dismisses after ~4s, and that no bad photo was added to the form).
 
+## Post-launch: wiped-device recovery + Trash
+
+Requested after initial ship, in response to two concrete risks: (1) what happens if a device's local storage is wiped or a fresh device joins — could it push empty/fake state and destroy the other device's real data? and (2) deletions had no undo. Both required rethinking part of the sync design, not just adding a feature on top.
+
+### Wiped-device recovery guarantee
+
+**The risk was never really "empty push deletes things"** — push has never had a delete-by-absence code path; it only ever upserts rows it actually has, so a genuinely empty local device already pushes nothing, safely. The real risks were subtler:
+
+1. **Auto-seeded demo data would get pushed as pollution.** `seedIfEmpty()` used to run unconditionally on every app mount. After a wipe, it would recreate 3 sample products with fresh random UUIDs and a fresh `updated_at`. On the next sync, that fabricated data would get pushed as if it were real.
+2. **A fabricated default Settings row could actively overwrite real data.** Settings is a *singleton* (`id: 'default'`). A freshly-recreated default settings row has `updated_at = now()` — newer than genuinely-old real settings on the server. Since **push always blindly upserts** (there's no "only if mine is actually newer" check on the way out — last-write-wins is only evaluated during pull), a wiped device could push fabricated defaults that look newer and clobber the real settings, which every other device would then also adopt on their next pull. This is the sharpest version of "must never push empty state that overwrites other devices' data," and it's fixed at the seeding layer, not the sync layer.
+3. **Incremental pull is inherently fragile for "always fully recover."** This is the same class of bug as the earlier sync watermark issue (see below) — any pull that filters by "what's changed since X" is one edge case away from missing something.
+
+**Where the fix lives** — three places, all working together:
+
+- `src/db/seed.ts#seedIfEmpty()`: now gated with `if (isSupabaseConfigured) return` before any sample data is created (it still always ensures the local-only `syncMeta` row exists, which is harmless — that table never syncs). When Supabase is configured, a wiped or brand-new device is left genuinely empty until the user presses Sync or types something themselves. No demo data, ever, once sync is in play.
+- `src/features/calculator/CalculatorPage.tsx`: previously auto-created a default Settings row from `useEffect` the moment the tab was opened — a *second*, independent path to the exact same "fabricated row with a fresh timestamp" problem, undiscovered until specifically checked for while fixing #1. Now it does a one-time direct `db.settings.get()` (not `useLiveQuery`, which can't distinguish "still loading" from "confirmed no row" on its first render) to pre-fill the inputs with sensible display defaults, but a `userEdited` flag — set only by the input `onChange` handlers, never by the initial pre-fill — gates whether anything is actually written to Dexie. Verified live: opening the tab and waiting past the debounce window creates zero rows; typing an actual value creates exactly one.
+- `src/lib/sync.ts`: **pull no longer filters by any watermark at all** — it always fetches the complete current row set for products/orders/settings/replies from Supabase, every sync. This is the one place a straightforward "just make it always-correct" beats "make it correct under all timing conditions": at this app's scale (a small business's catalog), full metadata pulls are trivially cheap, and it makes recovery correct *by construction* rather than by careful reasoning about clocks. Photo *blobs* are the one thing still handled incrementally — `pullProducts()` builds a local id→blob index up front and only downloads a photo it doesn't already have cached, so recovery doesn't mean re-downloading every image every time. Push stays incremental (`updated_at > since`) — safe, because it only ever competes against this same device's own timeline, not another device's clock.
+
+**Verified live** against the real Supabase project: pushed a product (with photo) + a reply from a signed-in session, wiped that browser context's IndexedDB (`indexedDB.deleteDatabase` on every database) while leaving `localStorage` untouched — confirming the Supabase auth session survives an IndexedDB wipe, since `supabase-js` persists it separately — reloaded (confirmed zero rows locally, no demo data), pressed Sync, and confirmed the product (with its photo byte-for-byte), the reply, and settings all came back correctly. Zero console errors.
+
+*Scope note*: this guarantees full recovery from "local storage empty/wiped," which is what a real "clear site data" or corrupted-profile event actually looks like (IndexedDB is cleared as a whole database, not selectively). It does not implement a full reconciliation protocol for a hypothetical *partial* record loss with `syncMeta` intact — that would need a much more expensive protocol and isn't a realistic browser failure mode.
+
+### Trash / soft-delete with restore
+
+Tapping Delete on a product, order, or reply no longer hard-deletes. Three states now exist per record, in order:
+
+1. **Active** — `trashed_at: null`. Normal.
+2. **Trashed** — `trashed_at` set to when it was trashed. Hidden from every normal view (every list/filter query across Products/Orders/Replies/Dashboard/ProductPicker/PhotoSearchOverlay was updated to `!x.deleted && !x.trashed_at`), but fully recoverable, and listed in the new Trash view.
+3. **Permanently deleted** — the pre-existing `deleted: true` tombstone flag. The *only* way here is Empty Trash or the 7-day auto-purge.
+
+**Why `deleted: true` was reused for permanent deletion instead of inventing something new**: propagating an actual deletion through an upsert-only sync system needs a tombstone (you can't sync "this row is gone" as a delta without leaving *something* behind for other devices to eventually pull and act on). `deleted` already *was* exactly that tombstone — it was already syncing correctly, already filtered out of every view, already proven live during the two-device conflict test in Phase 7. Empty Trash and the auto-purge just set it on demand instead of it being the only delete path; no sync-side changes were needed for permanent deletion to propagate.
+
+Built:
+- `lib/trash.ts`: `trashItem`/`restoreItem` (set/clear `trashed_at` + bump `updated_at`), `emptyTrash`/`purgeExpiredTrash` (tombstone everything trashed / everything trashed past `TRASH_RETENTION_DAYS = 7`), `listTrashed` (unified, newest-first list across all three tables for the UI).
+- `supabase/migrations/0003_trash.sql`: adds `trashed_at timestamptz` to products/orders/replies (Settings excluded — singleton config, not a deletable item).
+- `ProductDetail`/`OrderDetail`/`ReplyRow`'s existing Delete buttons now call `trashItem` instead of setting `deleted` directly — same two-step confirm UI as before, different underlying action.
+- `features/trash/TrashPage.tsx`: lists everything trashed (type badge, label, "Trashed N days ago", Restore button), plus an Empty Trash button (same two-step confirm pattern used elsewhere in the app). Opened via a new Trash icon in the Header — there's no dedicated Settings tab in this app, so the header is the closest thing to a persistent "menu."
+- `purgeExpiredTrash()` runs on every app mount and after every successful sync (`App.tsx`), matching "checked on app open and after sync." A purge that runs on Device A pushes on Device A's *next* sync (not synchronously within the same click) — acceptable, since the requirement was that it eventually syncs, not that it does so within one button press.
+
+**Edit-vs-delete conflict resolution**: trashing a record is modeled as nothing more than a timestamped field change (`trashed_at` + `updated_at`, just like editing any other field) — so the exact same whole-row last-write-wins mechanism already proven in Phase 7 resolves this automatically, with no new merge logic:
+- Device A edits a product's price at T1. Device B trashes the *same* product at T2 > T1. After both sync, whichever device is later reflects T2's full row state — the product ends up **trashed**, and A's price edit is superseded (it's still "last write wins" over the whole record, not a field-level merge).
+- If instead B had trashed it *before* A's edit (T2 < T1), A's later edit wins — the product ends up **active** again with A's new price. A fresh edit after a delete effectively un-deletes it.
+
+This is a deliberate consequence of whole-row LWW rather than field-level merging, and it was already the app's conflict model before Trash existed — trashing didn't need to introduce anything new, it just needed to *be* a normal timestamped edit rather than a special out-of-band operation.
+
+**Status**: complete and verified live, both locally and against the real Supabase project.
+
+While first testing this against the live project (before asking the user to run the migration), every push started failing with `PGRST204: Could not find the 'trashed_at' column of 'products'` — every push now includes that field on every table, so *nothing* could sync at all, not just trash-specific actions, until `0003_trash.sql` was run. That migration is now applied.
+
+With it applied, the live two-device test (two separate Playwright browser contexts, same shared Auth account, against project `effvtiufxynirkeojzdr`) confirmed all of the following, each with zero console errors:
+- Device A adds a product and syncs; Device B signs in and syncs, receives it.
+- Device A trashes it; both sync; it disappears from Device B's normal Products view *and* correctly appears in Device B's Trash view, labeled "Trashed today."
+- Device B restores it; both sync; it's active again on Device A.
+- Device A trashes it again; both sync; Device B presses Empty Trash; both sync again; it's gone from *both* devices' Trash views — the permanent deletion propagated correctly.
+- Separately (single device, no network involved): a product manually backdated to `trashed_at` 10 days ago was correctly tombstoned (`deleted: true`) the next time the app was opened, confirming the 7-day auto-purge.
+
+All test data was cleaned up from the live project afterward (same as after the Phase 7 sync test) — tables and Storage confirmed empty.
+
 ## Status
 
-Every phase in `PLAN.md` is built and verified, including a live two-device sync test against the user's real Supabase project (see Phase 7). The `.env` in this working copy has real credentials for project `effvtiufxynirkeojzdr` — before deploying, add the same `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` as environment variables in the Vercel project settings (`.env` itself is gitignored and won't ship with a deploy).
+Every phase in `PLAN.md` is built and verified, including live two-device tests against the user's real Supabase project for both the original sync conflict scenario (Phase 7) and the wiped-device recovery + Trash sync scenarios above. The `.env` in this working copy has real credentials for project `effvtiufxynirkeojzdr` — before deploying, add the same `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` as environment variables in the Vercel project settings (`.env` itself is gitignored and won't ship with a deploy). All three migrations (`0001_init.sql`, `0002_server_timestamp.sql`, `0003_trash.sql`) have been run against that project, in order.
 
-Nothing outstanding. If picking this project back up, the natural next steps would be user-driven, not spec-driven: real product photos, real customer traffic, and the Phase 2 roadmap items explicitly deferred in `PLAN.md` §7 (Steadfast API, Meta APIs, etc.) — build those only when actually asked for.
+Nothing outstanding. If picking this project back up, next steps would be user-driven, not spec-driven — real product photos, real customer traffic, and the Phase 2 roadmap items explicitly deferred in `PLAN.md` §7 (Steadfast API, Meta APIs, etc.) — build those only when actually asked for.

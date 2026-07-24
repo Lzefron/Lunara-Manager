@@ -12,54 +12,50 @@ interface RemotePhoto {
   thumb_path: string
 }
 
-type RemoteProduct = Omit<Product, 'photos'> & { photos: RemotePhoto[]; server_updated_at: string }
-type WithServerTs<T> = T & { server_updated_at: string }
-
-interface StepResult {
-  count: number
-  maxServerTs: string
-}
-
-function laterOf(a: string, b: string): string {
-  return b > a ? b : a
-}
-
-function maxServerTsOf(rows: { server_updated_at: string }[], fallback: string): string {
-  return rows.reduce((max, row) => laterOf(max, row.server_updated_at), fallback)
-}
+type RemoteProduct = Omit<Product, 'photos'> & { photos: RemotePhoto[] }
 
 async function pushSimpleTable<T extends { id: string; updated_at: string }>(
   table: string,
   dexieTable: Table<T, string>,
   since: string,
-): Promise<StepResult> {
+): Promise<number> {
   if (!supabase) throw new Error('Supabase not configured')
   const rows = await dexieTable.filter((r) => r.updated_at > since).toArray()
-  if (rows.length === 0) return { count: 0, maxServerTs: since }
-  const { data, error } = await supabase.from(table).upsert(rows).select('server_updated_at')
+  if (rows.length === 0) return 0
+  const { error } = await supabase.from(table).upsert(rows)
   if (error) throw new Error(`Push ${table} failed: ${error.message}`)
-  return { count: rows.length, maxServerTs: maxServerTsOf((data ?? []) as { server_updated_at: string }[], since) }
+  return rows.length
 }
 
+/**
+ * Pull ALWAYS fetches the full current row set for a table — deliberately
+ * not filtered by any "since" watermark. An earlier version filtered pull
+ * by a timestamp, which is exactly what caused a real bug found in live
+ * two-device testing (see CLAUDE.md "Wiped-device recovery" /
+ * "Sync watermark bug"): any watermark-based pull is one clock-timing edge
+ * case away from silently skipping a row forever, and that risk is
+ * unacceptable for the specific guarantee this app needs — a wiped or
+ * new device must be able to fully rebuild itself from the server. At this
+ * app's scale (a small reselling business's catalog), fetching every row's
+ * small JSON metadata every manual sync is trivially cheap; only photo
+ * *blobs* are worth being incremental about (see pullProducts).
+ */
 async function pullSimpleTable<T extends { id: string; updated_at: string }>(
   table: string,
   dexieTable: Table<T, string>,
-  since: string,
-): Promise<StepResult> {
+): Promise<number> {
   if (!supabase) throw new Error('Supabase not configured')
-  const { data, error } = await supabase.from(table).select('*').gt('server_updated_at', since)
+  const { data, error } = await supabase.from(table).select('*')
   if (error) throw new Error(`Pull ${table} failed: ${error.message}`)
-  const rows = (data ?? []) as WithServerTs<T>[]
   let applied = 0
-  for (const remote of rows) {
+  for (const remote of (data ?? []) as T[]) {
     const local = await dexieTable.get(remote.id)
     if (!local || remote.updated_at > local.updated_at) {
-      const { server_updated_at: _server_updated_at, ...rest } = remote
-      await dexieTable.put(rest as unknown as T)
+      await dexieTable.put(remote)
       applied++
     }
   }
-  return { count: applied, maxServerTs: maxServerTsOf(rows, since) }
+  return applied
 }
 
 function photoPaths(productId: string, photoId: string) {
@@ -69,10 +65,10 @@ function photoPaths(productId: string, photoId: string) {
   }
 }
 
-async function pushProducts(since: string): Promise<StepResult> {
+async function pushProducts(since: string): Promise<number> {
   if (!supabase) throw new Error('Supabase not configured')
   const products = await db.products.filter((p) => p.updated_at > since).toArray()
-  if (products.length === 0) return { count: 0, maxServerTs: since }
+  if (products.length === 0) return 0
 
   for (const product of products) {
     for (const photo of product.photos) {
@@ -86,7 +82,7 @@ async function pushProducts(since: string): Promise<StepResult> {
     }
   }
 
-  const remoteRows = products.map((product) => ({
+  const remoteRows: RemoteProduct[] = products.map((product) => ({
     ...product,
     photos: product.photos.map((photo) => ({
       id: photo.id,
@@ -95,9 +91,9 @@ async function pushProducts(since: string): Promise<StepResult> {
     })),
   }))
 
-  const { data, error } = await supabase.from('products').upsert(remoteRows).select('server_updated_at')
+  const { error } = await supabase.from('products').upsert(remoteRows)
   if (error) throw new Error(`Push products failed: ${error.message}`)
-  return { count: products.length, maxServerTs: maxServerTsOf((data ?? []) as { server_updated_at: string }[], since) }
+  return products.length
 }
 
 async function downloadPhoto(product_id: string, remote: RemotePhoto): Promise<Photo> {
@@ -111,24 +107,35 @@ async function downloadPhoto(product_id: string, remote: RemotePhoto): Promise<P
   return { id: remote.id, phash: remote.phash, webp_blob: webpRes.data, thumb_blob: thumbRes.data }
 }
 
-async function pullProducts(since: string): Promise<StepResult> {
-  if (!supabase) throw new Error('Supabase not configured')
-  const { data, error } = await supabase.from('products').select('*').gt('server_updated_at', since)
-  if (error) throw new Error(`Pull products failed: ${error.message}`)
-  const rows = (data ?? []) as RemoteProduct[]
+/** Every photo id currently cached locally, across all products — a photo's bytes never change once uploaded, so a cache hit never needs re-downloading. */
+async function localPhotoIndex(): Promise<Map<string, Photo>> {
+  const products = await db.products.toArray()
+  const index = new Map<string, Photo>()
+  for (const product of products) {
+    for (const photo of product.photos) index.set(photo.id, photo)
+  }
+  return index
+}
 
+async function pullProducts(): Promise<number> {
+  if (!supabase) throw new Error('Supabase not configured')
+  const { data, error } = await supabase.from('products').select('*')
+  if (error) throw new Error(`Pull products failed: ${error.message}`)
+
+  const cache = await localPhotoIndex()
   let applied = 0
-  for (const remote of rows) {
+  for (const remote of (data ?? []) as RemoteProduct[]) {
     const local = await db.products.get(remote.id)
     if (local && remote.updated_at <= local.updated_at) continue
 
-    const photos = await Promise.all(remote.photos.map((p) => downloadPhoto(remote.id, p)))
-    const { server_updated_at: _server_updated_at, ...rest } = remote
-    const product: Product = { ...rest, photos }
+    const photos = await Promise.all(
+      remote.photos.map((p) => cache.get(p.id) ?? downloadPhoto(remote.id, p)),
+    )
+    const product: Product = { ...remote, photos }
     await db.products.put(product)
     applied++
   }
-  return { count: applied, maxServerTs: maxServerTsOf(rows, since) }
+  return applied
 }
 
 export interface SyncResult {
@@ -137,25 +144,14 @@ export interface SyncResult {
 }
 
 /**
- * Push local changes since the last sync, then pull remote changes since the
- * same watermark, merging last-write-wins on `updated_at`.
- *
- * The pull watermark is tracked against `server_updated_at` (a
- * trigger-assigned, server-clock timestamp — see migration 0002), NOT the
- * client-supplied `updated_at` used for last-write-wins. Using `updated_at`
- * for both purposes was a real bug found in live two-device testing: a
- * device's own watermark (set to its local "now" right after its own sync)
- * can end up chronologically after another device's *edit* timestamp even
- * though that edit hadn't been pushed to the server yet. Once it finally
- * was pushed, `updated_at > since` was false forever and the change was
- * silently never pulled again. `server_updated_at` is monotonic in actual
- * write order, which is what an incremental-pull watermark needs.
- *
- * The watermark only advances to the max `server_updated_at` actually
- * observed this round (from both our own push's response and any pulled
- * rows) — never to "now" — so a failure partway through leaves the next
- * attempt to safely redo the same idempotent (upsert-by-id) work rather
- * than risk skipping something.
+ * Push local changes since the last sync (incremental — safe, since a
+ * device can only ever push what it actually has, and an empty/wiped
+ * device naturally pushes nothing), then pull the full current dataset
+ * (always-complete — see pullSimpleTable), merging last-write-wins on
+ * `updated_at`. A pulled echo of what we just pushed is a safe no-op
+ * (equal timestamps). The watermark used for the *next* push is simply
+ * "now" — safe here because it only ever races against this same device's
+ * own future edits, not another device's clock.
  */
 export async function runSync(): Promise<SyncResult> {
   if (!supabase) {
@@ -168,30 +164,19 @@ export async function runSync(): Promise<SyncResult> {
 
   const meta = await db.syncMeta.get(SYNC_META_ID)
   const since = meta?.last_synced_at ?? EPOCH
-  let watermark = since
 
   let pushed = 0
-  for (const step of [
-    await pushProducts(since),
-    await pushSimpleTable<Order>('orders', db.orders, since),
-    await pushSimpleTable<Settings>('settings', db.settings, since),
-    await pushSimpleTable<Reply>('replies', db.replies, since),
-  ]) {
-    pushed += step.count
-    watermark = laterOf(watermark, step.maxServerTs)
-  }
+  pushed += await pushProducts(since)
+  pushed += await pushSimpleTable<Order>('orders', db.orders, since)
+  pushed += await pushSimpleTable<Settings>('settings', db.settings, since)
+  pushed += await pushSimpleTable<Reply>('replies', db.replies, since)
 
   let pulled = 0
-  for (const step of [
-    await pullProducts(since),
-    await pullSimpleTable<Order>('orders', db.orders, since),
-    await pullSimpleTable<Settings>('settings', db.settings, since),
-    await pullSimpleTable<Reply>('replies', db.replies, since),
-  ]) {
-    pulled += step.count
-    watermark = laterOf(watermark, step.maxServerTs)
-  }
+  pulled += await pullProducts()
+  pulled += await pullSimpleTable<Order>('orders', db.orders)
+  pulled += await pullSimpleTable<Settings>('settings', db.settings)
+  pulled += await pullSimpleTable<Reply>('replies', db.replies)
 
-  await db.syncMeta.put({ id: SYNC_META_ID, last_synced_at: watermark })
+  await db.syncMeta.put({ id: SYNC_META_ID, last_synced_at: new Date().toISOString() })
   return { pushed, pulled }
 }

@@ -6,7 +6,7 @@ import { ReplyRow } from './ReplyRow'
 import { ReplyForm } from './ReplyForm'
 
 export function RepliesPage() {
-  const replies = useLiveQuery(() => db.replies.filter((r) => !r.deleted).toArray(), [])
+  const replies = useLiveQuery(() => db.replies.filter((r) => !r.deleted && !r.trashed_at).toArray(), [])
   const [formTarget, setFormTarget] = useState<Reply | 'new' | null>(null)
 
   const grouped = useMemo(() => {

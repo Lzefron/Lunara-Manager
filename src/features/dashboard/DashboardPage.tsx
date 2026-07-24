@@ -7,8 +7,8 @@ const STUCK_STATUSES = ['china', 'shipped_bd', 'steadfast'] as const
 const STUCK_THRESHOLD_DAYS = 7
 
 export function DashboardPage() {
-  const orders = useLiveQuery(() => db.orders.filter((o) => !o.deleted).toArray(), [])
-  const products = useLiveQuery(() => db.products.filter((p) => !p.deleted).toArray(), [])
+  const orders = useLiveQuery(() => db.orders.filter((o) => !o.deleted && !o.trashed_at).toArray(), [])
+  const products = useLiveQuery(() => db.products.filter((p) => !p.deleted && !p.trashed_at).toArray(), [])
   const settings = useLiveQuery(() => db.settings.get(SETTINGS_ID))
 
   const now = new Date()

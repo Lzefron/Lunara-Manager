@@ -3,6 +3,7 @@ import type { Order, Photo, Product, Reply, Settings } from '../types'
 import { compressImage, computePHash } from '../lib/image'
 import { drawPlaceholder } from '../lib/placeholder'
 import { generatePriceCode } from '../lib/pricing'
+import { isSupabaseConfigured } from '../lib/supabaseConfig'
 
 const SAMPLE_PRODUCTS: Array<{
   name: string
@@ -58,6 +59,7 @@ async function buildSeedProducts(): Promise<Product[]> {
         created_at: ts,
         updated_at: ts,
         deleted: false,
+        trashed_at: null,
         name: p.name,
         sell_price: p.sell_price,
         cost_rmb: p.cost_rmb,
@@ -81,6 +83,7 @@ function buildSeedOrders(productIds: string[]): Order[] {
       created_at: ts,
       updated_at: ts,
       deleted: false,
+      trashed_at: null,
       customer_name: 'Farhana Akter',
       phone: '01712345678',
       address: 'House 12, Road 5, Dhanmondi, Dhaka',
@@ -100,6 +103,7 @@ function buildSeedOrders(productIds: string[]): Order[] {
       created_at: ts,
       updated_at: ts,
       deleted: false,
+      trashed_at: null,
       customer_name: 'Rakibul Hasan',
       phone: '01899887766',
       address: 'Agrabad, Chattogram',
@@ -123,6 +127,7 @@ function buildSeedReplies(): Reply[] {
       created_at: ts,
       updated_at: ts,
       deleted: false,
+      trashed_at: null,
       category: 'Greeting',
       title: 'Welcome',
       text: 'আসসালামু আলাইকুম! Lunara তে স্বাগতম। কীভাবে সাহায্য করতে পারি?',
@@ -132,6 +137,7 @@ function buildSeedReplies(): Reply[] {
       created_at: ts,
       updated_at: ts,
       deleted: false,
+      trashed_at: null,
       category: 'Price',
       title: 'Price + delivery included',
       text: 'দাম উল্লেখ করা আছে ছবির উপরে। ডেলিভারি চার্জ আলাদা (ঢাকার ভিতরে ৬০৳, বাইরে ১২০৳)।',
@@ -141,6 +147,7 @@ function buildSeedReplies(): Reply[] {
       created_at: ts,
       updated_at: ts,
       deleted: false,
+      trashed_at: null,
       category: 'Delivery',
       title: 'Delivery time',
       text: 'অর্ডার করার পর সাধারণত ৭-১০ দিনের মধ্যে ডেলিভারি হয়ে থাকে।',
@@ -150,6 +157,7 @@ function buildSeedReplies(): Reply[] {
       created_at: ts,
       updated_at: ts,
       deleted: false,
+      trashed_at: null,
       category: 'Payment',
       title: 'Cash on delivery',
       text: 'আমরা ক্যাশ অন ডেলিভারি সুবিধা দিয়ে থাকি। পণ্য হাতে পেয়ে টাকা পরিশোধ করবেন।',
@@ -172,32 +180,48 @@ function defaultSettings(): Settings {
 }
 
 /**
- * Seeds first-run sample data. The empty-check and the writes happen inside
- * one Dexie transaction: IndexedDB serializes overlapping readwrite
- * transactions on the same stores, so concurrent callers (React StrictMode's
- * double effect invocation, or two open tabs) can't both see "empty" and
- * double-insert — the second caller's re-check inside the transaction sees
- * the first caller's writes.
+ * Seeds first-run sample data — but ONLY when Supabase sync isn't
+ * configured at all (single-device demo/offline mode, matching the
+ * original Phase 1 "works offline out of the box" intent).
+ *
+ * When Supabase IS configured, seeding is skipped entirely, on every
+ * launch, including after a wipe. This is deliberate: if this ran after a
+ * device's IndexedDB got cleared, it would recreate sample products/orders
+ * (and, worse, a *default settings row*) with fresh `updated_at` timestamps
+ * — which the next sync could then push and have last-write-wins let this
+ * fabricated local data overwrite the real synced data on every other
+ * device, since "just recreated" always looks newer than "genuinely edited
+ * a while ago." Leaving local state empty instead means push has nothing
+ * to send (safe) and the recovery pull (see lib/sync.ts) rebuilds
+ * everything real from the server. See CLAUDE.md "Wiped-device recovery."
  */
 export async function seedIfEmpty(): Promise<void> {
-  const [productCount, orderCount, replyCount, hasSettings, hasSyncMeta] = await Promise.all([
+  if ((await db.syncMeta.get(SYNC_META_ID)) === undefined) {
+    await db.syncMeta.put({ id: SYNC_META_ID, last_synced_at: null })
+  }
+
+  if (isSupabaseConfigured) return
+
+  const [productCount, orderCount, replyCount, hasSettings] = await Promise.all([
     db.products.count(),
     db.orders.count(),
     db.replies.count(),
     db.settings.get(SETTINGS_ID).then((r) => !!r),
-    db.syncMeta.get(SYNC_META_ID).then((r) => !!r),
   ])
 
-  if (productCount > 0 && orderCount > 0 && replyCount > 0 && hasSettings && hasSyncMeta) return
+  if (productCount > 0 && orderCount > 0 && replyCount > 0 && hasSettings) return
 
   const seedProducts = productCount === 0 ? await buildSeedProducts() : []
 
-  await db.transaction('rw', [db.products, db.orders, db.replies, db.settings, db.syncMeta], async () => {
+  // The empty-check and the writes happen inside one Dexie transaction:
+  // IndexedDB serializes overlapping readwrite transactions on the same
+  // stores, so concurrent callers (React StrictMode's double effect
+  // invocation, or two open tabs) can't both see "empty" and double-insert
+  // — the second caller's re-check inside the transaction sees the first
+  // caller's writes.
+  await db.transaction('rw', [db.products, db.orders, db.replies, db.settings], async () => {
     if ((await db.settings.get(SETTINGS_ID)) === undefined) {
       await db.settings.put(defaultSettings())
-    }
-    if ((await db.syncMeta.get(SYNC_META_ID)) === undefined) {
-      await db.syncMeta.put({ id: SYNC_META_ID, last_synced_at: null })
     }
     if (seedProducts.length > 0 && (await db.products.count()) === 0) {
       await db.products.bulkAdd(seedProducts)

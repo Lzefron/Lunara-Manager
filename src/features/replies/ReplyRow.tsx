@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Reply } from '../../types'
-import { db, nowIso } from '../../db/db'
 import { errorMessage, showToast } from '../../lib/toast'
+import { trashItem } from '../../lib/trash'
 
 interface Props {
   reply: Reply
@@ -29,7 +29,7 @@ export function ReplyRow({ reply, onEdit }: Props) {
       return
     }
     try {
-      await db.replies.update(reply.id, { deleted: true, updated_at: nowIso() })
+      await trashItem('replies', reply.id)
     } catch (err) {
       showToast(errorMessage(err, 'Could not delete the reply.'))
     }

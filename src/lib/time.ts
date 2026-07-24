@@ -38,3 +38,10 @@ export function daysSince(iso: string, reference: Date = new Date()): number {
   const diffMs = reference.getTime() - new Date(iso).getTime()
   return diffMs / (1000 * 60 * 60 * 24)
 }
+
+export function formatDaysAgo(iso: string): string {
+  const days = Math.floor(daysSince(iso))
+  if (days <= 0) return 'today'
+  if (days === 1) return 'yesterday'
+  return `${days} days ago`
+}

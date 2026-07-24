@@ -14,6 +14,7 @@ export interface Product {
   created_at: string
   updated_at: string
   deleted: boolean
+  trashed_at: string | null
   name: string
   sell_price: number
   cost_rmb: number
@@ -30,6 +31,7 @@ export interface Order {
   created_at: string
   updated_at: string
   deleted: boolean
+  trashed_at: string | null
   customer_name: string
   phone: string
   address: string
@@ -57,6 +59,7 @@ export interface Reply {
   created_at: string
   updated_at: string
   deleted: boolean
+  trashed_at: string | null
   category: string
   title: string
   text: string

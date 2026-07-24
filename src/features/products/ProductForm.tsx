@@ -76,6 +76,7 @@ export function ProductForm({ product, prefill, onClose, onSaved }: Props) {
         created_at: product?.created_at ?? ts,
         updated_at: ts,
         deleted: false,
+        trashed_at: product?.trashed_at ?? null,
         name: form.name.trim(),
         sell_price: sellPriceNum,
         cost_rmb: Number(form.cost_rmb) || 0,

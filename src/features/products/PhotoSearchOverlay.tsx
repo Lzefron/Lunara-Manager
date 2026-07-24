@@ -18,7 +18,7 @@ interface Match {
 }
 
 export function PhotoSearchOverlay({ image, onReplace, onClose }: Props) {
-  const products = useLiveQuery(() => db.products.filter((p) => !p.deleted && p.photos.length > 0).toArray(), [])
+  const products = useLiveQuery(() => db.products.filter((p) => !p.deleted && !p.trashed_at && p.photos.length > 0).toArray(), [])
   const [detailProduct, setDetailProduct] = useState<Product | null>(null)
   const [formTarget, setFormTarget] = useState<Product | null>(null)
   const [queryHash, setQueryHash] = useState<string | null>(null)

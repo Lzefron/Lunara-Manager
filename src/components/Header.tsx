@@ -2,15 +2,16 @@ import { useRef } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, SYNC_META_ID } from '../db/db'
 import { formatRelative } from '../lib/time'
-import { PhotoSearchIcon, SyncIcon } from './icons'
+import { PhotoSearchIcon, SyncIcon, TrashIcon } from './icons'
 
 interface Props {
   onSync?: () => void
   syncing?: boolean
   onPhotoSearch: (image: Blob) => void
+  onOpenTrash: () => void
 }
 
-export function Header({ onSync, syncing, onPhotoSearch }: Props) {
+export function Header({ onSync, syncing, onPhotoSearch, onOpenTrash }: Props) {
   const syncMeta = useLiveQuery(() => db.syncMeta.get(SYNC_META_ID))
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -21,6 +22,15 @@ export function Header({ onSync, syncing, onPhotoSearch }: Props) {
           Lunara
         </span>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpenTrash}
+            aria-label="Trash"
+            title="Trash"
+            className="flex items-center justify-center rounded-full border border-neutral-200 p-2 text-neutral-600 dark:border-neutral-700 dark:text-neutral-300"
+          >
+            <TrashIcon className="h-4 w-4" />
+          </button>
           <button
             type="button"
             onClick={() => fileRef.current?.click()}

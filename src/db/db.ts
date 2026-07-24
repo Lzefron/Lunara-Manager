@@ -19,6 +19,15 @@ export class LunaraDB extends Dexie {
       replies: 'id, category, updated_at',
       syncMeta: 'id',
     })
+    // v2: adds trashed_at (indexed — null entries are simply skipped by
+    // IndexedDB, which is fine, we only ever query it for non-null values).
+    this.version(2).stores({
+      products: 'id, name, updated_at, trashed_at',
+      orders: 'id, status, updated_at, phone, customer_name, trashed_at',
+      settings: 'id',
+      replies: 'id, category, updated_at, trashed_at',
+      syncMeta: 'id',
+    })
   }
 }
 

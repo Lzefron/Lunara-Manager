@@ -5,6 +5,7 @@ import { db, nowIso } from '../../db/db'
 import { Modal } from '../../components/Modal'
 import { formatDate } from '../../lib/time'
 import { errorMessage, showToast } from '../../lib/toast'
+import { trashItem } from '../../lib/trash'
 
 const PIPELINE: OrderStatus[] = ['china', 'shipped_bd', 'steadfast', 'delivered']
 
@@ -45,7 +46,7 @@ export function OrderDetail({ order, onClose, onEdit, onDeleted }: Props) {
 
   async function handleDelete() {
     try {
-      await db.orders.update(order.id, { deleted: true, updated_at: nowIso() })
+      await trashItem('orders', order.id)
       onDeleted()
     } catch (err) {
       showToast(errorMessage(err, 'Could not delete the order.'))

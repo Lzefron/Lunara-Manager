@@ -28,6 +28,7 @@ export function ReplyForm({ reply, onClose, onSaved }: Props) {
         created_at: reply?.created_at ?? ts,
         updated_at: ts,
         deleted: false,
+        trashed_at: reply?.trashed_at ?? null,
         category: category.trim(),
         title: title.trim(),
         text: text.trim(),

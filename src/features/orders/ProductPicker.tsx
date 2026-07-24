@@ -9,7 +9,7 @@ interface Props {
 }
 
 export function ProductPicker({ selected, onChange }: Props) {
-  const products = useLiveQuery(() => db.products.filter((p) => !p.deleted).toArray(), [])
+  const products = useLiveQuery(() => db.products.filter((p) => !p.deleted && !p.trashed_at).toArray(), [])
   const [query, setQuery] = useState('')
 
   const visible = products ? fuzzySearch(query, products, (p) => p.name).slice(0, 8) : []

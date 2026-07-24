@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { Product } from '../../types'
-import { db, nowIso } from '../../db/db'
 import { Modal } from '../../components/Modal'
 import { errorMessage, showToast } from '../../lib/toast'
+import { trashItem } from '../../lib/trash'
 
 interface Props {
   product: Product
@@ -18,7 +18,7 @@ export function ProductDetail({ product, onClose, onEdit, onDeleted }: Props) {
 
   async function handleDelete() {
     try {
-      await db.products.update(product.id, { deleted: true, updated_at: nowIso() })
+      await trashItem('products', product.id)
       onDeleted()
     } catch (err) {
       showToast(errorMessage(err, 'Could not delete the product.'))

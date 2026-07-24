@@ -8,7 +8,7 @@ import { ProductDetail } from './ProductDetail'
 import { ProductForm } from './ProductForm'
 
 export function ProductsPage() {
-  const products = useLiveQuery(() => db.products.filter((p) => !p.deleted).toArray(), [])
+  const products = useLiveQuery(() => db.products.filter((p) => !p.deleted && !p.trashed_at).toArray(), [])
   const [query, setQuery] = useState('')
   const [detailProduct, setDetailProduct] = useState<Product | null>(null)
   const [formTarget, setFormTarget] = useState<Product | 'new' | null>(null)

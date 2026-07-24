@@ -66,6 +66,7 @@ export function OrderForm({ order, prefill, onClose, onSaved }: Props) {
         created_at: order?.created_at ?? ts,
         updated_at: ts,
         deleted: false,
+        trashed_at: order?.trashed_at ?? null,
         customer_name: form.customer_name.trim(),
         phone: form.phone.trim(),
         address: form.address.trim(),
