@@ -60,8 +60,8 @@ export function PhotoInput({ photos, onChange }: Props) {
       <span className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">Photos</span>
       <div className="flex flex-wrap gap-2">
         {photos.map((photo, i) => (
-          <div key={photo.id} className="relative h-20 w-20 overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-700">
-            <img src={thumbUrls[i]} alt="" className="h-full w-full object-cover" />
+          <div key={photo.id} className="relative w-36 rounded-lg border border-neutral-200 p-2 dark:border-neutral-700">
+            <img src={thumbUrls[i]} alt={photo.label || `Photo ${i + 1}`} className="h-28 w-full rounded object-cover" />
             <button
               type="button"
               onClick={() => onChange(photos.filter((p) => p.id !== photo.id))}
@@ -72,6 +72,9 @@ export function PhotoInput({ photos, onChange }: Props) {
                 <path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" />
               </svg>
             </button>
+            <button type="button" onClick={() => onChange([photo, ...photos.filter(p => p.id !== photo.id)])} className="my-2 w-full rounded bg-violet-100 px-2 py-1 text-xs text-violet-700">{i === 0 ? '✓ Cover image' : 'Use as cover'}</button>
+            <label className="block text-xs">Photo type<select value={photo.kind ?? 'catalog'} onChange={e => onChange(photos.map(p => p.id === photo.id ? { ...p, kind: e.target.value as Photo['kind'] } : p))} className="mt-1 w-full rounded border p-1 text-xs dark:bg-neutral-800"><option value="catalog">Catalog photo</option><option value="variant">Color / design</option><option value="real">Real photo</option></select></label>
+            <label className="mt-2 block text-xs">Label<input value={photo.label ?? ''} placeholder="e.g. Black · mini" onChange={e => onChange(photos.map(p => p.id === photo.id ? { ...p, label: e.target.value } : p))} className="mt-1 w-full rounded border p-1 text-xs dark:bg-neutral-800" /></label>
           </div>
         ))}
 
@@ -104,7 +107,7 @@ export function PhotoInput({ photos, onChange }: Props) {
           e.target.value = ''
         }}
       />
-      <p className="mt-1 text-xs text-neutral-400">Click the tile then press Ctrl+V to paste a copied image.</p>
+      <p className="mt-1 text-xs text-neutral-400">The first photo is the storefront cover. Add color/design variations and real photos, then label each one. Click Add / paste then press Ctrl+V to paste a copied image.</p>
     </div>
   )
 }

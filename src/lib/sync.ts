@@ -5,11 +5,27 @@ import type { Order, Photo, Product, Reply, Settings } from '../types'
 
 const EPOCH = '1970-01-01T00:00:00.000Z'
 
+const newer = (a: string, b: string) => Date.parse(a) > Date.parse(b)
+
+// PostgREST caps individual responses; page so recovery includes every row.
+async function fetchAll<T>(table: string): Promise<T[]> {
+  if (!supabase) throw new Error('Supabase not configured')
+  const rows: T[] = []
+  for (let offset = 0; ; offset += 500) {
+    const { data, error } = await supabase.from(table).select('*').order('id').range(offset, offset + 499)
+    if (error) throw new Error(`Pull ${table} failed: ${error.message}`)
+    rows.push(...(data ?? []) as T[])
+    if (!data || data.length < 500) return rows
+  }
+}
+
 interface RemotePhoto {
   id: string
   phash: string
   webp_path: string
   thumb_path: string
+  kind?: 'catalog' | 'variant' | 'real'
+  label?: string
 }
 
 type RemoteProduct = Omit<Product, 'photos'> & { photos: RemotePhoto[] }
@@ -20,7 +36,7 @@ async function pushSimpleTable<T extends { id: string; updated_at: string }>(
   since: string,
 ): Promise<number> {
   if (!supabase) throw new Error('Supabase not configured')
-  const rows = await dexieTable.filter((r) => r.updated_at > since).toArray()
+  const rows = await dexieTable.filter((r) => Date.parse(r.updated_at) >= Date.parse(since)).toArray()
   if (rows.length === 0) return 0
   const { error } = await supabase.from(table).upsert(rows)
   if (error) throw new Error(`Push ${table} failed: ${error.message}`)
@@ -45,15 +61,16 @@ async function pullSimpleTable<T extends { id: string; updated_at: string }>(
   dexieTable: Table<T, string>,
 ): Promise<number> {
   if (!supabase) throw new Error('Supabase not configured')
-  const { data, error } = await supabase.from(table).select('*')
-  if (error) throw new Error(`Pull ${table} failed: ${error.message}`)
+  const data = await fetchAll<T>(table)
   let applied = 0
   for (const remote of (data ?? []) as T[]) {
-    const local = await dexieTable.get(remote.id)
-    if (!local || remote.updated_at > local.updated_at) {
-      await dexieTable.put(remote)
-      applied++
-    }
+    await db.transaction('rw', dexieTable, async () => {
+      const local = await dexieTable.get(remote.id)
+      if (!local || newer(remote.updated_at, local.updated_at)) {
+        await dexieTable.put(remote)
+        applied++
+      }
+    })
   }
   return applied
 }
@@ -67,7 +84,7 @@ function photoPaths(productId: string, photoId: string) {
 
 async function pushProducts(since: string): Promise<number> {
   if (!supabase) throw new Error('Supabase not configured')
-  const products = await db.products.filter((p) => p.updated_at > since).toArray()
+  const products = await db.products.filter((p) => Date.parse(p.updated_at) >= Date.parse(since)).toArray()
   if (products.length === 0) return 0
 
   for (const product of products) {
@@ -87,6 +104,8 @@ async function pushProducts(since: string): Promise<number> {
     photos: product.photos.map((photo) => ({
       id: photo.id,
       phash: photo.phash,
+      kind: photo.kind ?? 'catalog',
+      label: photo.label ?? '',
       ...photoPaths(product.id, photo.id),
     })),
   }))
@@ -104,7 +123,7 @@ async function downloadPhoto(product_id: string, remote: RemotePhoto): Promise<P
   ])
   if (webpRes.error) throw new Error(`Photo download failed (${product_id}): ${webpRes.error.message}`)
   if (thumbRes.error) throw new Error(`Thumbnail download failed (${product_id}): ${thumbRes.error.message}`)
-  return { id: remote.id, phash: remote.phash, webp_blob: webpRes.data, thumb_blob: thumbRes.data }
+  return { id: remote.id, phash: remote.phash, kind: remote.kind, label: remote.label, webp_blob: webpRes.data, thumb_blob: thumbRes.data }
 }
 
 /** Every photo id currently cached locally, across all products — a photo's bytes never change once uploaded, so a cache hit never needs re-downloading. */
@@ -119,21 +138,30 @@ async function localPhotoIndex(): Promise<Map<string, Photo>> {
 
 async function pullProducts(): Promise<number> {
   if (!supabase) throw new Error('Supabase not configured')
-  const { data, error } = await supabase.from('products').select('*')
-  if (error) throw new Error(`Pull products failed: ${error.message}`)
+  const data = await fetchAll<RemoteProduct>('products')
 
   const cache = await localPhotoIndex()
   let applied = 0
   for (const remote of (data ?? []) as RemoteProduct[]) {
     const local = await db.products.get(remote.id)
-    if (local && remote.updated_at <= local.updated_at) continue
+    if (local && !newer(remote.updated_at, local.updated_at)) continue
 
     const photos = await Promise.all(
-      remote.photos.map((p) => cache.get(p.id) ?? downloadPhoto(remote.id, p)),
+      remote.photos.map((p) => {
+        const cached = cache.get(p.id)
+        return cached ? { ...cached, kind: p.kind, label: p.label } : downloadPhoto(remote.id, p)
+      }),
     )
     const product: Product = { ...remote, photos }
-    await db.products.put(product)
-    applied++
+    // Downloading photos can take time. Re-read inside a transaction so an
+    // edit saved while a download runs cannot be overwritten by this pull.
+    await db.transaction('rw', db.products, async () => {
+      const current = await db.products.get(remote.id)
+      if (!current || newer(remote.updated_at, current.updated_at)) {
+        await db.products.put(product)
+        applied++
+      }
+    })
   }
   return applied
 }
@@ -150,10 +178,20 @@ export interface SyncResult {
  * (always-complete — see pullSimpleTable), merging last-write-wins on
  * `updated_at`. A pulled echo of what we just pushed is a safe no-op
  * (equal timestamps). The watermark used for the *next* push is simply
- * "now" — safe here because it only ever races against this same device's
- * own future edits, not another device's clock.
+ * the start of this sync so local edits made during network work are still
+ * dirty on the next pass. The database rejects stale writes from other devices.
  */
-export async function runSync(): Promise<SyncResult> {
+let pending: Promise<SyncResult> | null = null
+export function runSync(): Promise<SyncResult> {
+  if (pending) return pending
+  // Web Locks serializes multiple open tabs sharing this IndexedDB.
+  pending = (navigator.locks
+    ? navigator.locks.request('lunara-sync', () => syncOnce())
+    : syncOnce()).finally(() => { pending = null })
+  return pending
+}
+
+async function syncOnce(): Promise<SyncResult> {
   if (!supabase) {
     throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.')
   }
@@ -162,6 +200,7 @@ export async function runSync(): Promise<SyncResult> {
   } = await supabase.auth.getSession()
   if (!session) throw new Error('Not signed in.')
 
+  const startedAt = new Date().toISOString()
   const meta = await db.syncMeta.get(SYNC_META_ID)
   const since = meta?.last_synced_at ?? EPOCH
 
@@ -177,6 +216,7 @@ export async function runSync(): Promise<SyncResult> {
   pulled += await pullSimpleTable<Settings>('settings', db.settings)
   pulled += await pullSimpleTable<Reply>('replies', db.replies)
 
-  await db.syncMeta.put({ id: SYNC_META_ID, last_synced_at: new Date().toISOString() })
+  // Use the START, so edits made during network I/O are retried next time.
+  await db.syncMeta.put({ id: SYNC_META_ID, last_synced_at: startedAt })
   return { pushed, pulled }
 }

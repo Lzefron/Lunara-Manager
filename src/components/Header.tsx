@@ -58,7 +58,7 @@ export function Header({ onSync, syncing, onPhotoSearch, onOpenTrash }: Props) {
             className="flex items-center gap-1.5 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 disabled:opacity-60 dark:border-neutral-700 dark:text-neutral-300"
           >
             <SyncIcon className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? 'Syncing…' : formatRelative(syncMeta?.last_synced_at ?? null)}
+            {syncing ? 'Syncing…' : `Sync · ${formatRelative(syncMeta?.last_synced_at ?? null)}`}
           </button>
         </div>
       </div>

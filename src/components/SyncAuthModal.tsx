@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { Modal } from './Modal'
+import { syncErrorMessage } from '../lib/syncErrors'
 
 interface Props {
   supabase: SupabaseClient
@@ -15,15 +16,18 @@ export function SyncAuthModal({ supabase, onClose, onSignedIn }: Props) {
   const [loading, setLoading] = useState(false)
 
   async function handleSignIn() {
+    if (loading) return
     setLoading(true)
     setError(null)
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
-    setLoading(false)
-    if (error) {
-      setError(error.message)
-      return
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
+      if (error) throw error
+      onSignedIn()
+    } catch (err) {
+      setError(syncErrorMessage(err))
+    } finally {
+      setLoading(false)
     }
-    onSignedIn()
   }
 
   return (

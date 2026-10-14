@@ -7,6 +7,8 @@ export interface Photo {
   webp_blob: Blob
   thumb_blob: Blob
   phash: string
+  kind?: 'catalog' | 'variant' | 'real'
+  label?: string
 }
 
 export interface Product {
@@ -24,6 +26,16 @@ export interface Product {
   photos: Photo[]
   notes: string
   price_code: string
+  catalog_visible?: boolean
+  category?: string
+  subcategory?: string
+  public_description?: string
+  featured?: boolean
+}
+
+export interface CatalogCategory {
+  name: string
+  subcategories: string[]
 }
 
 export interface Order {
@@ -52,6 +64,7 @@ export interface Settings {
   shipping_rate_per_kg: number
   default_profit_mode: ProfitMode
   default_profit_value: number
+  catalog_categories?: CatalogCategory[]
 }
 
 export interface Reply {

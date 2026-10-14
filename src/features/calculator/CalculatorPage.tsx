@@ -61,10 +61,12 @@ export function CalculatorPage() {
     if (Number.isNaN(rate) || Number.isNaN(shipping)) return
     const timer = setTimeout(() => {
       const ts = nowIso()
-      db.settings
-        .put({
+      db.transaction('rw', db.settings, async () => {
+        const existing = await db.settings.get(SETTINGS_ID)
+        await db.settings.put({
+          ...existing,
           id: SETTINGS_ID,
-          created_at: createdAtRef.current ?? ts,
+          created_at: existing?.created_at ?? createdAtRef.current ?? ts,
           updated_at: ts,
           deleted: false,
           rmb_to_bdt_rate: rate,
@@ -72,6 +74,7 @@ export function CalculatorPage() {
           default_profit_mode: profitMode,
           default_profit_value: Number(profitValue) || 0,
         })
+      })
         .then(() => {
           createdAtRef.current = createdAtRef.current ?? ts
         })

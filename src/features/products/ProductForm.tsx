@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import type { Photo, Product } from '../../types'
-import { db, newId, nowIso } from '../../db/db'
+import { db, newId, nowIso, SETTINGS_ID } from '../../db/db'
+import { DEFAULT_CATEGORIES } from '../../lib/catalog'
 import { Modal } from '../../components/Modal'
 import { TagInput } from '../../components/TagInput'
 import { PhotoInput } from './PhotoInput'
@@ -24,6 +26,11 @@ interface FormState {
   notes: string
   price_code: string
   photos: Photo[]
+  catalog_visible: boolean
+  category: string
+  subcategory: string
+  public_description: string
+  featured: boolean
 }
 
 function toFormState(product: Product | null, prefill?: Props['prefill']): FormState {
@@ -38,6 +45,11 @@ function toFormState(product: Product | null, prefill?: Props['prefill']): FormS
       notes: product.notes,
       price_code: product.price_code,
       photos: product.photos,
+      catalog_visible: product.catalog_visible ?? false,
+      category: product.category ?? '',
+      subcategory: product.subcategory ?? '',
+      public_description: product.public_description ?? '',
+      featured: product.featured ?? false,
     }
   }
   const sellPrice = prefill?.sell_price
@@ -51,16 +63,23 @@ function toFormState(product: Product | null, prefill?: Props['prefill']): FormS
     notes: '',
     price_code: sellPrice !== undefined ? generatePriceCode(sellPrice) : '',
     photos: [],
+    catalog_visible: false,
+    category: '',
+    subcategory: '',
+    public_description: '',
+    featured: false,
   }
 }
 
 export function ProductForm({ product, prefill, onClose, onSaved }: Props) {
+  const settings = useLiveQuery(() => db.settings.get(SETTINGS_ID))
+  const categories = settings?.catalog_categories ?? DEFAULT_CATEGORIES
   const [form, setForm] = useState<FormState>(() => toFormState(product, prefill))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const sellPriceNum = Number(form.sell_price)
-  const canSave = form.name.trim() !== '' && form.sell_price !== '' && !Number.isNaN(sellPriceNum)
+  const canSave = form.name.trim() !== '' && form.sell_price !== '' && Number.isFinite(sellPriceNum) && sellPriceNum >= 0 && (!form.catalog_visible || !!form.category)
 
   async function handleSave() {
     if (!canSave) {
@@ -86,6 +105,11 @@ export function ProductForm({ product, prefill, onClose, onSaved }: Props) {
         photos: form.photos,
         notes: form.notes,
         price_code: form.price_code.trim() || generatePriceCode(sellPriceNum),
+        catalog_visible: form.catalog_visible,
+        category: form.category,
+        subcategory: form.subcategory,
+        public_description: form.public_description.trim(),
+        featured: form.featured,
       }
       await db.products.put(saved)
       onSaved(saved)
@@ -210,6 +234,15 @@ export function ProductForm({ product, prefill, onClose, onSaved }: Props) {
           </div>
         </label>
 
+        <fieldset className="space-y-3 rounded-xl border border-violet-200 p-3 dark:border-violet-800">
+          <legend className="px-1 text-sm font-semibold text-violet-600">Customer catalog</legend>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.catalog_visible} onChange={e => setForm({ ...form, catalog_visible: e.target.checked })} />Show in customer catalog</label>
+          <label className="block text-sm">Category<select value={form.category} onChange={e => setForm({ ...form, category: e.target.value, subcategory: '' })} className="mt-1 w-full rounded-lg border p-2 dark:bg-neutral-800"><option value="">Choose a category</option>{categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}</select></label>
+          <label className="block text-sm">Subcategory<select value={form.subcategory} onChange={e => setForm({ ...form, subcategory: e.target.value })} className="mt-1 w-full rounded-lg border p-2 dark:bg-neutral-800"><option value="">All / no subcategory</option>{categories.find(c => c.name === form.category)?.subcategories.map(s => <option key={s} value={s}>{s}</option>)}</select></label>
+          <label className="block text-sm">Customer description<textarea value={form.public_description} onChange={e => setForm({ ...form, public_description: e.target.value })} rows={3} className="mt-1 w-full rounded-lg border p-2 dark:bg-neutral-800" placeholder="Material, size, and details customers should see" /></label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.featured} onChange={e => setForm({ ...form, featured: e.target.checked })} />Feature in the daily feed</label>
+          <p className="text-xs text-neutral-500">Only the customer description is public. Internal notes and costs stay private. Create more categories using Customer catalog above the product list.</p>
+        </fieldset>
         <PhotoInput photos={form.photos} onChange={(photos) => setForm({ ...form, photos })} />
       </div>
     </Modal>
