@@ -5,5 +5,6 @@ export function syncErrorMessage(error: unknown): string {
     return 'Supabase is offline or unavailable. Your changes are saved on this device. If the project is paused, resume it in the Supabase dashboard, then tap Sync.'
   }
   if (/PGRST204|column|schema cache|customer_catalog/i.test(message)) return `Database setup needs updating. Apply the latest Supabase migrations, then tap Sync. (${message})`
+  if (/row-level security|permission denied/i.test(message)) return 'This account does not have Manager access. Use the existing shared Lunara account.'
   return message
 }
