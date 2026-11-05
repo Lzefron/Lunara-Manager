@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, nowIso, SETTINGS_ID, SYNC_META_ID } from '../db/db'
-import { DEFAULT_CATEGORIES } from '../lib/catalog'
+import { DEFAULT_CATEGORIES, mergeCategories } from '../lib/catalog'
 import { isSupabaseConfigured } from '../lib/supabaseConfig'
 import { Modal } from './Modal'
 
 export function CatalogSettings({ onClose }: { onClose: () => void }) {
   const settings = useLiveQuery(() => db.settings.get(SETTINGS_ID))
-  const categories = settings?.catalog_categories ?? DEFAULT_CATEGORIES
+  const categories = mergeCategories(DEFAULT_CATEGORIES, settings?.catalog_categories)
   const [name, setName] = useState('')
   const [parent, setParent] = useState('')
   const [message, setMessage] = useState('')
@@ -27,8 +27,8 @@ export function CatalogSettings({ onClose }: { onClose: () => void }) {
         shipping_rate_per_kg: 900, default_profit_mode: 'percent', default_profit_value: 30,
         ...current,
         catalog_categories: parent
-          ? categories.map(c => c.name === parent ? { ...c, subcategories: [...c.subcategories, value] } : c)
-          : [...categories, { name: value, subcategories: [] }],
+          ? mergeCategories(DEFAULT_CATEGORIES, current?.catalog_categories).map(c => c.name === parent ? { ...c, subcategories: [...c.subcategories, value] } : c)
+          : [...mergeCategories(DEFAULT_CATEGORIES, current?.catalog_categories), { name: value, subcategories: [] }],
         updated_at: ts,
       })
       })

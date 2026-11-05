@@ -1,0 +1,148 @@
+[
+  {
+    "name": "Bags",
+    "subcategories": [
+      "Handbags",
+      "Shoulder bags",
+      "Crossbody bags",
+      "Clutches",
+      "Purses & wallets",
+      "Vanity bags",
+      "Party bags",
+      "Tote bags",
+      "Canvas totes",
+      "Everyday totes",
+      "Backpacks",
+      "Mini bags",
+      "Bucket bags",
+      "Travel bags",
+      "Bag charms & straps"
+    ]
+  },
+  {
+    "name": "Clothes",
+    "subcategories": [
+      "Tops",
+      "T-shirts",
+      "Shirts & blouses",
+      "Dresses",
+      "Co-ords",
+      "Kurtis & tunics",
+      "Salwar kameez",
+      "Sarees",
+      "Abayas",
+      "Pants & palazzos",
+      "Jeans",
+      "Skirts",
+      "Jackets & cardigans",
+      "Sleepwear",
+      "Activewear"
+    ]
+  },
+  {
+    "name": "Shoes",
+    "subcategories": [
+      "Sandals",
+      "Flats",
+      "Heels",
+      "Sneakers",
+      "Loafers",
+      "Mules",
+      "Ballet flats",
+      "Wedges",
+      "Slippers",
+      "Boots",
+      "Party shoes"
+    ]
+  },
+  {
+    "name": "Cosmetics",
+    "subcategories": [
+      "Lipstick & lip tint",
+      "Lip gloss & balm",
+      "Foundation & concealer",
+      "Face powder",
+      "Blush & highlighter",
+      "Eyeshadow",
+      "Eyeliner & kajal",
+      "Mascara",
+      "Nail polish",
+      "Makeup sets",
+      "Makeup",
+      "Beauty tools"
+    ]
+  },
+  {
+    "name": "Skincare",
+    "subcategories": [
+      "Cleansers",
+      "Toners",
+      "Serums",
+      "Moisturizers",
+      "Sunscreen",
+      "Face masks",
+      "Eye care",
+      "Lip care",
+      "Skincare sets"
+    ]
+  },
+  {
+    "name": "Jewellery",
+    "subcategories": [
+      "Earrings",
+      "Necklaces",
+      "Rings",
+      "Bracelets",
+      "Bangles",
+      "Anklets",
+      "Jewellery sets",
+      "Brooches"
+    ]
+  },
+  {
+    "name": "Hair & accessories",
+    "subcategories": [
+      "Hair clips",
+      "Claw clips",
+      "Scrunchies",
+      "Headbands",
+      "Hair ties",
+      "Hair brushes",
+      "Shampoo & conditioner",
+      "Hair treatments",
+      "Styling tools"
+    ]
+  },
+  {
+    "name": "Hijabs & scarves",
+    "subcategories": [
+      "Hijabs",
+      "Scarves",
+      "Shawls",
+      "Undercaps",
+      "Hijab pins & magnets"
+    ]
+  },
+  {
+    "name": "Accessories",
+    "subcategories": [
+      "Sunglasses",
+      "Watches",
+      "Belts",
+      "Phone accessories",
+      "Keyrings",
+      "Travel organizers"
+    ]
+  },
+  {
+    "name": "Fragrance & body",
+    "subcategories": [
+      "Perfume",
+      "Body mist",
+      "Deodorant",
+      "Body lotion",
+      "Body wash",
+      "Hand & foot care"
+    ]
+  }
+]

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import type { Photo, Product } from '../../types'
 import { db, newId, nowIso, SETTINGS_ID } from '../../db/db'
-import { DEFAULT_CATEGORIES } from '../../lib/catalog'
+import { DEFAULT_CATEGORIES, mergeCategories, normalizeCategory } from '../../lib/catalog'
 import { Modal } from '../../components/Modal'
 import { TagInput } from '../../components/TagInput'
 import { PhotoInput } from './PhotoInput'
@@ -10,6 +10,7 @@ import { generatePriceCode } from '../../lib/pricing'
 import { errorMessage, showToast } from '../../lib/toast'
 
 interface Props {
+  publishMode?: boolean
   product: Product | null
   prefill?: Partial<Pick<Product, 'cost_rmb' | 'weight_g' | 'sell_price'>>
   onClose: () => void
@@ -46,7 +47,7 @@ function toFormState(product: Product | null, prefill?: Props['prefill']): FormS
       price_code: product.price_code,
       photos: product.photos,
       catalog_visible: product.catalog_visible ?? false,
-      category: product.category ?? '',
+      category: normalizeCategory(product.category ?? ''),
       subcategory: product.subcategory ?? '',
       public_description: product.public_description ?? '',
       featured: product.featured ?? false,
@@ -71,15 +72,17 @@ function toFormState(product: Product | null, prefill?: Props['prefill']): FormS
   }
 }
 
-export function ProductForm({ product, prefill, onClose, onSaved }: Props) {
+export function ProductForm({ product, prefill, onClose, onSaved, publishMode = false }: Props) {
   const settings = useLiveQuery(() => db.settings.get(SETTINGS_ID))
-  const categories = settings?.catalog_categories ?? DEFAULT_CATEGORIES
-  const [form, setForm] = useState<FormState>(() => toFormState(product, prefill))
+  const categories = mergeCategories(DEFAULT_CATEGORIES, settings?.catalog_categories, product ? [product] : [])
+  const [form, setForm] = useState<FormState>(() => ({ ...toFormState(product, prefill), ...(publishMode ? { catalog_visible: true } : {}) }))
+  const [reviewing, setReviewing] = useState(false)
+  const [processingPhotos, setProcessingPhotos] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const sellPriceNum = Number(form.sell_price)
-  const canSave = form.name.trim() !== '' && form.sell_price !== '' && Number.isFinite(sellPriceNum) && sellPriceNum >= 0 && (!form.catalog_visible || !!form.category)
+  const canSave = form.name.trim() !== '' && form.sell_price !== '' && Number.isFinite(sellPriceNum) && sellPriceNum >= 0 && !processingPhotos && (!form.catalog_visible || (!!form.category && form.photos.length > 0))
 
   async function handleSave() {
     if (!canSave) {
@@ -112,6 +115,7 @@ export function ProductForm({ product, prefill, onClose, onSaved }: Props) {
         featured: form.featured,
       }
       await db.products.put(saved)
+      showToast(saved.catalog_visible ? 'Listing saved. Sync sends it to the customer website.' : 'Product saved.')
       onSaved(saved)
     } catch (err) {
       showToast(errorMessage(err, 'Could not save the product.'))
@@ -122,29 +126,30 @@ export function ProductForm({ product, prefill, onClose, onSaved }: Props) {
 
   return (
     <Modal
-      title={product ? 'Edit product' : 'Add product'}
+      title={reviewing ? 'Review customer listing' : publishMode ? 'Prepare customer listing' : product ? 'Edit product' : 'Add product'}
       onClose={onClose}
       footer={
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => reviewing ? setReviewing(false) : onClose()}
             className="flex-1 rounded-lg border border-neutral-300 py-2 text-sm font-medium text-neutral-700 dark:border-neutral-700 dark:text-neutral-300"
           >
-            Cancel
+            {reviewing ? 'Back to edit' : 'Cancel'}
           </button>
           <button
             type="button"
-            onClick={handleSave}
+            onClick={() => form.catalog_visible && !reviewing ? setReviewing(true) : handleSave()}
             disabled={!canSave || saving}
             className="flex-1 rounded-lg bg-violet-600 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? 'Saving…' : form.catalog_visible ? reviewing ? 'Save & publish' : 'Review listing' : 'Save'}
           </button>
         </div>
       }
     >
-      <div className="space-y-3">
+      {reviewing ? <div className="space-y-3"><h3 className="text-lg font-semibold">{form.name}</h3><p>৳{form.sell_price} · {form.category} / {form.subcategory || 'All types'}</p><p>{form.public_description || 'No description added.'}</p><p>{form.colors.join(' · ')} · {form.available ? 'Available' : 'Sold out'}</p><p>{form.photos.length} photos · {form.photos.filter(p => p.kind === 'real').length} real photos</p><PhotoInput photos={form.photos} onChange={photos => setForm({ ...form, photos })} onProcessingChange={setProcessingPhotos}/><p className="text-sm text-neutral-500">Save updates this existing product. The listing appears on the customer website after a successful sync. Costs, price codes and internal notes stay private.</p></div> : <div className="space-y-3">
+        {publishMode && <p className="rounded-lg bg-violet-50 p-3 text-sm text-violet-800">Review this existing product, add photos and details, then publish. Your changes are saved only when you confirm.</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
 
         <label className="block">
@@ -243,8 +248,9 @@ export function ProductForm({ product, prefill, onClose, onSaved }: Props) {
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.featured} onChange={e => setForm({ ...form, featured: e.target.checked })} />Feature in the daily feed</label>
           <p className="text-xs text-neutral-500">Only the customer description is public. Internal notes and costs stay private. Create more categories using Customer catalog above the product list.</p>
         </fieldset>
-        <PhotoInput photos={form.photos} onChange={(photos) => setForm({ ...form, photos })} />
-      </div>
+        {form.catalog_visible && !form.photos.length && <p className="text-sm text-amber-700">Add at least one cover photo before publishing.</p>}
+        <PhotoInput photos={form.photos} onChange={(photos) => setForm(current => ({ ...current, photos }))} onProcessingChange={setProcessingPhotos} />
+      </div>}
     </Modal>
   )
 }

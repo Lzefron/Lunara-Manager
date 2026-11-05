@@ -9,6 +9,9 @@ export interface Photo {
   phash: string
   kind?: 'catalog' | 'variant' | 'real'
   label?: string
+  color?: string
+  size?: string
+  design?: string
 }
 
 export interface Product {

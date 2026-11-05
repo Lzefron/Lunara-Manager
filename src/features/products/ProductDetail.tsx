@@ -8,10 +8,11 @@ interface Props {
   product: Product
   onClose: () => void
   onEdit: () => void
+  onPublish?: () => void
   onDeleted: () => void
 }
 
-export function ProductDetail({ product, onClose, onEdit, onDeleted }: Props) {
+export function ProductDetail({ product, onClose, onEdit, onDeleted, onPublish }: Props) {
   const urls = usePhotoUrls(product)
   const [activeSlide, setActiveSlide] = useState(0)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -94,6 +95,7 @@ export function ProductDetail({ product, onClose, onEdit, onDeleted }: Props) {
           </p>
         )}
 
+        {onPublish && <button onClick={onPublish} className="w-full rounded-lg bg-violet-600 py-3 text-sm font-semibold text-white">{product.catalog_visible ? 'Edit customer listing' : 'Publish to customer catalog'} ↗</button>}
         <div className="flex gap-2 pt-1">
           <button
             type="button"

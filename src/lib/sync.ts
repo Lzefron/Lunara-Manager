@@ -26,6 +26,9 @@ interface RemotePhoto {
   thumb_path: string
   kind?: 'catalog' | 'variant' | 'real'
   label?: string
+  color?: string
+  size?: string
+  design?: string
 }
 
 type RemoteProduct = Omit<Product, 'photos'> & { photos: RemotePhoto[] }
@@ -105,7 +108,7 @@ async function pushProducts(since: string): Promise<number> {
       id: photo.id,
       phash: photo.phash,
       kind: photo.kind ?? 'catalog',
-      label: photo.label ?? '',
+      label: photo.label ?? '', color: photo.color ?? '', size: photo.size ?? '', design: photo.design ?? '',
       ...photoPaths(product.id, photo.id),
     })),
   }))
@@ -123,7 +126,7 @@ async function downloadPhoto(product_id: string, remote: RemotePhoto): Promise<P
   ])
   if (webpRes.error) throw new Error(`Photo download failed (${product_id}): ${webpRes.error.message}`)
   if (thumbRes.error) throw new Error(`Thumbnail download failed (${product_id}): ${thumbRes.error.message}`)
-  return { id: remote.id, phash: remote.phash, kind: remote.kind, label: remote.label, webp_blob: webpRes.data, thumb_blob: thumbRes.data }
+  return { id: remote.id, phash: remote.phash, kind: remote.kind, label: remote.label, color: remote.color, size: remote.size, design: remote.design, webp_blob: webpRes.data, thumb_blob: thumbRes.data }
 }
 
 /** Every photo id currently cached locally, across all products — a photo's bytes never change once uploaded, so a cache hit never needs re-downloading. */
@@ -149,7 +152,7 @@ async function pullProducts(): Promise<number> {
     const photos = await Promise.all(
       remote.photos.map((p) => {
         const cached = cache.get(p.id)
-        return cached ? { ...cached, kind: p.kind, label: p.label } : downloadPhoto(remote.id, p)
+        return cached ? { ...cached, kind: p.kind, label: p.label, color: p.color, size: p.size, design: p.design } : downloadPhoto(remote.id, p)
       }),
     )
     const product: Product = { ...remote, photos }

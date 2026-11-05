@@ -5,6 +5,7 @@ import { newId } from '../../db/db'
 import { showToast } from '../../lib/toast'
 
 interface Props {
+  onProcessingChange?: (busy: boolean) => void
   photos: Photo[]
   onChange: (photos: Photo[]) => void
 }
@@ -18,9 +19,12 @@ async function fileToPhoto(source: Blob): Promise<Photo> {
   return { id: newId(), webp_blob, thumb_blob, phash }
 }
 
-export function PhotoInput({ photos, onChange }: Props) {
+export function PhotoInput({ photos, onChange, onProcessingChange }: Props) {
   const [processing, setProcessing] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
+  const latestPhotos = useRef(photos)
+  latestPhotos.current = photos
+  useEffect(() => { onProcessingChange?.(processing > 0) }, [processing, onProcessingChange])
   const thumbUrls = useThumbUrls(photos)
 
   async function addFiles(files: FileList | File[]) {
@@ -41,7 +45,7 @@ export function PhotoInput({ photos, onChange }: Props) {
     if (failedCount > 0) {
       showToast(`Couldn't process ${failedCount} photo${failedCount === 1 ? '' : 's'} — try a different image.`)
     }
-    if (results.length > 0) onChange([...photos, ...results])
+    if (results.length > 0) onChange([...latestPhotos.current, ...results])
   }
 
   function handlePaste(e: React.ClipboardEvent) {
@@ -75,10 +79,13 @@ export function PhotoInput({ photos, onChange }: Props) {
             <button type="button" onClick={() => onChange([photo, ...photos.filter(p => p.id !== photo.id)])} className="my-2 w-full rounded bg-violet-100 px-2 py-1 text-xs text-violet-700">{i === 0 ? '✓ Cover image' : 'Use as cover'}</button>
             <label className="block text-xs">Photo type<select value={photo.kind ?? 'catalog'} onChange={e => onChange(photos.map(p => p.id === photo.id ? { ...p, kind: e.target.value as Photo['kind'] } : p))} className="mt-1 w-full rounded border p-1 text-xs dark:bg-neutral-800"><option value="catalog">Catalog photo</option><option value="variant">Color / design</option><option value="real">Real photo</option></select></label>
             <label className="mt-2 block text-xs">Label<input value={photo.label ?? ''} placeholder="e.g. Black · mini" onChange={e => onChange(photos.map(p => p.id === photo.id ? { ...p, label: e.target.value } : p))} className="mt-1 w-full rounded border p-1 text-xs dark:bg-neutral-800" /></label>
+            {(['color', 'size', 'design'] as const).map(field => <label key={field} className="mt-2 block text-xs capitalize">{field}<input aria-label={`Photo ${i + 1} ${field}`} value={photo[field] ?? ''} placeholder={field === 'size' ? 'e.g. M / 38 / 24 × 18 cm' : field === 'color' ? 'e.g. Black' : 'e.g. Pearl strap'} onChange={e => onChange(photos.map(p => p.id === photo.id ? { ...p, [field]: e.target.value } : p))} className="mt-1 w-full rounded border p-1 text-xs dark:bg-neutral-800" /></label>)}
           </div>
         ))}
 
         <div
+          role="button" aria-label="Add product photos"
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileRef.current?.click() } }}
           tabIndex={0}
           onPaste={handlePaste}
           onClick={() => fileRef.current?.click()}

@@ -20,6 +20,7 @@ interface Match {
 export function PhotoSearchOverlay({ image, onReplace, onClose }: Props) {
   const products = useLiveQuery(() => db.products.filter((p) => !p.deleted && !p.trashed_at && p.photos.length > 0).toArray(), [])
   const [detailProduct, setDetailProduct] = useState<Product | null>(null)
+  const [publishMode, setPublishMode] = useState(false)
   const [formTarget, setFormTarget] = useState<Product | null>(null)
   const [queryHash, setQueryHash] = useState<string | null>(null)
   const [queryUrl, setQueryUrl] = useState<string | null>(null)
@@ -111,14 +112,15 @@ export function PhotoSearchOverlay({ image, onReplace, onClose }: Props) {
           product={detailProduct}
           onClose={() => setDetailProduct(null)}
           onEdit={() => {
-            setFormTarget(detailProduct)
+            setPublishMode(false); setFormTarget(detailProduct)
             setDetailProduct(null)
           }}
+          onPublish={() => { setPublishMode(true); setFormTarget(detailProduct); setDetailProduct(null) }}
           onDeleted={() => setDetailProduct(null)}
         />
       )}
 
-      {formTarget && <ProductForm product={formTarget} onClose={() => setFormTarget(null)} onSaved={() => setFormTarget(null)} />}
+      {formTarget && <ProductForm publishMode={publishMode} product={formTarget} onClose={() => setFormTarget(null)} onSaved={() => setFormTarget(null)} />}
     </div>
   )
 }

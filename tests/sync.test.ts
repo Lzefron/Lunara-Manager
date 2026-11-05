@@ -81,3 +81,15 @@ test('photo labels and type update even when photo bytes are already cached', as
   expect((await db.products.get('p'))?.photos[0].kind).toBe('real')
   expect(download).not.toHaveBeenCalled()
 })
+
+test('publishing an existing product preserves its id and syncs extra photo attributes', async () => {
+  const photo = { id: 'real-photo', phash: '', webp_blob: new Blob(['image']), thumb_blob: new Blob(['thumb']), kind: 'real' as const, color: 'Black', size: 'M', design: 'Pearl strap' }
+  await db.products.put({ ...product('existing'), catalog_visible: true, category: 'Bags', subcategory: 'Clutches', photos: [photo] })
+  await runSync()
+  expect(mock.rows.products).toHaveLength(1)
+  expect(mock.rows.products[0].id).toBe('existing')
+  expect(mock.rows.products[0].photos[0]).toMatchObject({ color: 'Black', size: 'M', design: 'Pearl strap' })
+  await db.products.clear()
+  await runSync()
+  expect((await db.products.get('existing'))?.photos[0]).toMatchObject({ color: 'Black', size: 'M', design: 'Pearl strap' })
+})

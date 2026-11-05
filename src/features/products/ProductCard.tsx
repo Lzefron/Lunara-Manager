@@ -4,9 +4,10 @@ import type { Product } from '../../types'
 interface Props {
   product: Product
   onOpen: () => void
+  onPublish?: () => void
 }
 
-export function ProductCard({ product, onOpen }: Props) {
+export function ProductCard({ product, onOpen, onPublish }: Props) {
   const thumb = product.photos[0]?.thumb_blob
   const [url, setUrl] = useState<string | null>(null)
 
@@ -21,10 +22,10 @@ export function ProductCard({ product, onOpen }: Props) {
   }, [thumb])
 
   return (
-    <button
+    <div className="overflow-hidden rounded-xl border border-neutral-200 dark:border-neutral-800"><button
       type="button"
       onClick={onOpen}
-      className="group relative aspect-square overflow-hidden rounded-xl bg-neutral-200 text-left dark:bg-neutral-800"
+      className="group relative w-full aspect-square overflow-hidden rounded-xl bg-neutral-200 text-left dark:bg-neutral-800"
     >
       {url ? (
         <img src={url} alt={product.name} className="h-full w-full object-cover" loading="lazy" />
@@ -44,6 +45,6 @@ export function ProductCard({ product, onOpen }: Props) {
       >
         {product.available ? 'Available' : 'Out of stock'}
       </span>
-    </button>
+    </button>{onPublish && <button type="button" onClick={onPublish} className="w-full bg-violet-50 px-2 py-3 text-xs font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-200">{product.catalog_visible ? 'Edit customer listing' : 'Publish to customer catalog'} ↗</button>}</div>
   )
 }
